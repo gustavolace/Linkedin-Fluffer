@@ -16,9 +16,7 @@ namespace LinkedinFluffer.Services
 
         public Generator()
         {
-            DotEnv.Load();
-            var apiKey = DotEnv.Read()["API_KEY"];
-
+            var apiKey = Environment.GetEnvironmentVariable("API_KEY")!;
             _client = new HttpClient
             {
                 BaseAddress = new Uri("https://openrouter.ai/api/v1/")
@@ -30,59 +28,39 @@ namespace LinkedinFluffer.Services
                 new { role = "system", content = "You are a helpful assistant." }
             };
         }
-
-        public async Task RunAsync()
-        {
-            // First prompt
-            string firstPrompt = "Generate a fluffy post for LinkedIn about technology";
-            Console.WriteLine("You: " + firstPrompt);
-
-            _messages.Add(new { role = "user", content = firstPrompt });
-            string reply = await SendChatRequest(_messages);
-            Console.WriteLine($"Assistant: {reply}");
-            _messages.Add(new { role = "assistant", content = reply });
-
-            // Loop for more
-            while (true)
-            {
-                Console.Write("You: ");
-                string? userInput = Console.ReadLine();
-                if (string.IsNullOrWhiteSpace(userInput)) break;
-
-                _messages.Add(new { role = "user", content = userInput });
-                reply = await SendChatRequest(_messages);
-                Console.WriteLine($"Assistant: {reply}");
-                _messages.Add(new { role = "assistant", content = reply });
-            }
-        }
-
         private async Task<string> SendChatRequest(List<object> messages)
         {
             var requestBody = new
             {
                 model = "deepseek/deepseek-r1:free",
-                messages = messages
+                messages
             };
 
             var json = JsonSerializer.Serialize(requestBody);
             var content = new StringContent(json, Encoding.UTF8, "application/json");
 
             var response = await _client.PostAsync("chat/completions", content);
-            if (!response.IsSuccessStatusCode)
-            {
-                var errorText = await response.Content.ReadAsStringAsync();
-                throw new Exception($"API request failed: {response.StatusCode}\n{errorText}");
-            }
-
             var responseString = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
+                throw new Exception($"API request failed: {response.StatusCode}\n{responseString}");
+
             using var doc = JsonDocument.Parse(responseString);
-            var contentResponse = doc.RootElement
+            return doc.RootElement
                 .GetProperty("choices")[0]
                 .GetProperty("message")
                 .GetProperty("content")
-                .GetString();
-
-            return contentResponse ?? "";
+                .GetString() ?? "";
         }
+
+        public async Task<string> GenerateTextAsync()
+        {
+            string prompt = "Write other a short engaging post for LinkedIn about technology trends."; // or whatever prompt you want
+            _messages.Add(new { role = "user", content = prompt });
+            string reply = await SendChatRequest(_messages);
+            _messages.Add(new { role = "assistant", content = reply });
+            return reply;
+        }
+
     }
 }
