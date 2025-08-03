@@ -18,14 +18,64 @@ namespace LinkedinFluffer.Services
             _accessToken = accessToken;
             _personUrn = personUrn;
             _client = new HttpClient();
-            _client.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue("Bearer", _accessToken);
+            _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _accessToken);
             _client.DefaultRequestHeaders.Add("LinkedIn-Version", "202210");
             _client.DefaultRequestHeaders.Add("X-Restli-Protocol-Version", "2.0.0");
         }
 
-        public async Task PostAsync(string text)
+        public async Task PostAsync(string text, byte[] imgBytes)
         {
+            string cleanText = text.Replace("**", "");
+
+            // 1️⃣ Register image upload
+            var registerBody = new
+            {
+                registerUploadRequest = new
+                {
+                    owner = $"urn:li:person:{_personUrn.Trim()}",
+                    recipes = new[] { "urn:li:digitalmediaRecipe:feedshare-image" },
+                    serviceRelationships = new[]
+                    {
+                        new {
+                            identifier = "urn:li:userGeneratedContent",
+                            relationshipType = "OWNER"
+                        }
+                    },
+                    supportedUploadMechanism = new[] { "SYNCHRONOUS_UPLOAD" }
+                }
+            };
+
+            var registerContent = new StringContent(JsonSerializer.Serialize(registerBody), Encoding.UTF8, "application/json");
+            var registerResponse = await _client.PostAsync("https://api.linkedin.com/v2/assets?action=registerUpload", registerContent);
+            var registerJson = await registerResponse.Content.ReadAsStringAsync();
+
+            if (!registerResponse.IsSuccessStatusCode)
+                throw new Exception($"LinkedIn registerUpload failed: {registerResponse.StatusCode}\n{registerJson}");
+
+            using var registerDoc = JsonDocument.Parse(registerJson);
+            string uploadUrl = registerDoc.RootElement
+                .GetProperty("value")
+                .GetProperty("uploadMechanism")
+                .GetProperty("com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest")
+                .GetProperty("uploadUrl").GetString();
+
+            string mediaUrn = registerDoc.RootElement
+                .GetProperty("value")
+                .GetProperty("asset").GetString();
+
+            // 2️⃣ Upload image bytes
+            using (var imgContent = new ByteArrayContent(imgBytes))
+            {
+                imgContent.Headers.ContentType = new MediaTypeHeaderValue("image/png");
+                var uploadResp = await _client.PutAsync(uploadUrl, imgContent);
+                if (!uploadResp.IsSuccessStatusCode)
+                {
+                    var err = await uploadResp.Content.ReadAsStringAsync();
+                    throw new Exception($"Image upload failed: {uploadResp.StatusCode}\n{err}");
+                }
+            }
+
+            // 3️⃣ Post UGC with image reference
             var postBody = new
             {
                 author = $"urn:li:person:{_personUrn.Trim()}",
@@ -36,9 +86,16 @@ namespace LinkedinFluffer.Services
                     {
                         shareCommentary = new
                         {
-                            text = text
+                            text = cleanText
                         },
-                        shareMediaCategory = "NONE"
+                        shareMediaCategory = "IMAGE",
+                        media = new[]
+                        {
+                            new {
+                                status = "READY",
+                                media = mediaUrn
+                            }
+                        }
                     }
                 },
                 visibility = new
@@ -47,13 +104,11 @@ namespace LinkedinFluffer.Services
                 }
             };
 
-            // LinkedIn API expects dots in keys; fix after serialization
             string json = JsonSerializer.Serialize(postBody)
                 .Replace("comlinkedinugcShareContent", "com.linkedin.ugc.ShareContent")
                 .Replace("comlinkedinugcMemberNetworkVisibility", "com.linkedin.ugc.MemberNetworkVisibility");
 
             var content = new StringContent(json, Encoding.UTF8, "application/json");
-
             var response = await _client.PostAsync("https://api.linkedin.com/v2/ugcPosts", content);
 
             Console.WriteLine("LinkedIn Status: " + response.StatusCode);
