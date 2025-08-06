@@ -16,7 +16,7 @@ namespace LinkedinFluffer.Services
         public Poster(string accessToken, string personUrn)
         {
             _accessToken = accessToken;
-            _personUrn = personUrn;
+            _personUrn = personUrn.Trim();
             _client = new HttpClient();
             _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _accessToken);
             _client.DefaultRequestHeaders.Add("LinkedIn-Version", "202210");
@@ -32,23 +32,25 @@ namespace LinkedinFluffer.Services
             {
                 registerUploadRequest = new
                 {
-                    owner = $"urn:li:person:{_personUrn.Trim()}",
+                    owner = $"urn:li:person:{_personUrn}",
                     recipes = new[] { "urn:li:digitalmediaRecipe:feedshare-image" },
                     serviceRelationships = new[]
                     {
                         new {
-                            identifier = "urn:li:userGeneratedContent",
-                            relationshipType = "OWNER"
+                            relationshipType = "OWNER",
+                            identifier = "urn:li:userGeneratedContent"
                         }
                     },
                     supportedUploadMechanism = new[] { "SYNCHRONOUS_UPLOAD" }
                 }
             };
 
-            var registerContent = new StringContent(JsonSerializer.Serialize(registerBody), Encoding.UTF8, "application/json");
-            var registerResponse = await _client.PostAsync("https://api.linkedin.com/v2/assets?action=registerUpload", registerContent);
-            var registerJson = await registerResponse.Content.ReadAsStringAsync();
+            var registerResponse = await _client.PostAsync(
+                "https://api.linkedin.com/v2/assets?action=registerUpload",
+                new StringContent(JsonSerializer.Serialize(registerBody), Encoding.UTF8, "application/json")
+            );
 
+            string registerJson = await registerResponse.Content.ReadAsStringAsync();
             if (!registerResponse.IsSuccessStatusCode)
                 throw new Exception($"LinkedIn registerUpload failed: {registerResponse.StatusCode}\n{registerJson}");
 
@@ -63,7 +65,7 @@ namespace LinkedinFluffer.Services
                 .GetProperty("value")
                 .GetProperty("asset").GetString();
 
-            // 2️⃣ Upload image bytes
+            // 2️⃣ Upload image
             using (var imgContent = new ByteArrayContent(imgBytes))
             {
                 imgContent.Headers.ContentType = new MediaTypeHeaderValue("image/png");
@@ -75,26 +77,20 @@ namespace LinkedinFluffer.Services
                 }
             }
 
-            // 3️⃣ Post UGC with image reference
+            // 3️⃣ Post with UGC API
             var postBody = new
             {
-                author = $"urn:li:person:{_personUrn.Trim()}",
+                author = $"urn:li:person:{_personUrn}",
                 lifecycleState = "PUBLISHED",
                 specificContent = new
                 {
                     comlinkedinugcShareContent = new
                     {
-                        shareCommentary = new
-                        {
-                            text = cleanText
-                        },
+                        shareCommentary = new { text = cleanText },
                         shareMediaCategory = "IMAGE",
                         media = new[]
                         {
-                            new {
-                                status = "READY",
-                                media = mediaUrn
-                            }
+                            new { status = "READY", media = mediaUrn }
                         }
                     }
                 },
@@ -108,11 +104,17 @@ namespace LinkedinFluffer.Services
                 .Replace("comlinkedinugcShareContent", "com.linkedin.ugc.ShareContent")
                 .Replace("comlinkedinugcMemberNetworkVisibility", "com.linkedin.ugc.MemberNetworkVisibility");
 
-            var content = new StringContent(json, Encoding.UTF8, "application/json");
-            var response = await _client.PostAsync("https://api.linkedin.com/v2/ugcPosts", content);
+            var response = await _client.PostAsync(
+                "https://api.linkedin.com/v2/ugcPosts",
+                new StringContent(json, Encoding.UTF8, "application/json")
+            );
 
-            Console.WriteLine("LinkedIn Status: " + response.StatusCode);
-            Console.WriteLine(await response.Content.ReadAsStringAsync());
+            string postResult = await response.Content.ReadAsStringAsync();
+            Console.WriteLine($"LinkedIn Post Status: {response.StatusCode}");
+            Console.WriteLine(postResult);
+
+            if (!response.IsSuccessStatusCode)
+                throw new Exception($"Post failed: {response.StatusCode}\n{postResult}");
         }
     }
 }
