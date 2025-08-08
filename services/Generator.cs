@@ -82,7 +82,7 @@ You can also create posts inspired by these topics but not strictly in them.
 Avoid repeating previous posts.
 
 Guidelines:
-- Keep it 1–3 sentences max.
+- Keep some posts 1–3 sentences max, others can be longer.
 - Use a friendly, human-like tone.
 - Add 1–3 relevant emojis if they fit naturally.
 - Use up to 2 relevant hashtags if they add value (#AI, #CyberSecurity, #CleanCode, etc.).
